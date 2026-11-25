@@ -1,17 +1,30 @@
 <?php
 // index.html から MOO-Chan の出現状態を受け取り，send_serial.py で Arduino へ送る．
 //
-// 受け付ける入力は POST の JSON {"appearMOOChanState": 0 または 1} だけである．
-// それ以外は send_serial.py を呼ばずに 405 または 400 で断る．
+// 受け付ける入力は，Content-Type が application/json の POST で，
+// 本文が JSON {"appearMOOChanState": 0 または 1} のものだけである．
+// それ以外は send_serial.py を呼ばずに 405・415・400 のいずれかで断る．
 
 // 許可する appearMOOChanState．index.html が送る 0（不在）と 1（出現）に限る．
 const ALLOWED_STATES = [0, 1];
+
+// 受け付ける本文の media type．text/plain などは他サイトのフォームから送れるため断る．
+// application/json は，他サイトからだとブラウザーが事前確認（CORS preflight）を挟む．
+// request.php は事前確認に許可を返さないので，他サイトのページからは送れない．
+const ACCEPTED_MEDIA_TYPE = 'application/json';
 
 function respond_json(int $status, array $body): void
 {
     http_response_code($status);
     header('Content-Type: application/json');
     echo json_encode($body);
+}
+
+// Content-Type から charset などのパラメーターを除き，小文字にした media type を返す．
+function request_media_type(): string
+{
+    $contentType = (string) ($_SERVER['CONTENT_TYPE'] ?? '');
+    return strtolower(trim(explode(';', $contentType, 2)[0]));
 }
 
 function run_send_serial(int $state): string
@@ -31,6 +44,11 @@ function run_send_serial(int $state): string
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     header('Allow: POST');
     respond_json(405, ['error' => 'POST only']);
+    exit;
+}
+
+if (request_media_type() !== ACCEPTED_MEDIA_TYPE) {
+    respond_json(415, ['error' => 'Content-Type must be application/json']);
     exit;
 }
 
