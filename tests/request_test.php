@@ -9,6 +9,13 @@
 
 declare(strict_types=1);
 
+// リポジトリごと Web サーバーの公開ディレクトリに置くと，本ファイルも URL で開ける．
+// プロセスの起動や一時ファイルの作成を外から引き起こさせないため，CLI 以外では何もしない．
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
 const HOST = '127.0.0.1';
 const VALUE_KEY = 'appearMOOChanState';
 
