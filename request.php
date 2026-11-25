@@ -11,7 +11,8 @@ const ALLOWED_STATES = [0, 1];
 
 // 受け付ける本文の media type．text/plain などは他サイトのフォームから送れるため断る．
 // application/json は，他サイトからだとブラウザーが事前確認（CORS preflight）を挟む．
-// request.php は事前確認に許可を返さないので，他サイトのページからは送れない．
+// request.php は事前確認に許可を返さないので，通常は他サイトのページから送れない．
+// ただし DNS rebinding で同一オリジンとなった要求は防げない．詳細は README.md に書いた．
 const ACCEPTED_MEDIA_TYPE = 'application/json';
 
 function respond_json(int $status, array $body): void
