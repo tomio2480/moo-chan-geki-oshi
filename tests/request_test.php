@@ -406,6 +406,8 @@ try {
 
     // CSRF 対策: application/json 以外は 415 で断る．以下は他サイトのページから事前確認なしで送れる形である．
     // 本文が正常値でも send_serial.py を呼ばない．
+    // multipart/form-data は，boundary が無くても事前確認なしに送れる．
+    // 断る形を列挙して判定すると，この形を通してしまうため，ここで固定する．
     // 後ろの 2 つは，パラメーターの位置に application/json を含めた形である．
     // Fetch 仕様では media type の本体（essence）が text/plain なので，事前確認なしに送れる．
     // 生のヘッダーを部分一致で判定すると通してしまうため，ここで固定する．
@@ -413,6 +415,7 @@ try {
         'text/plain' => 'text/plain',
         'application/x-www-form-urlencoded' => 'application/x-www-form-urlencoded',
         'Content-Type なし' => null,
+        'boundary なしの multipart/form-data' => 'multipart/form-data',
         'text/plain; application/json' => 'text/plain; application/json',
         'text/plain;charset=application/json' => 'text/plain;charset=application/json',
     ];
