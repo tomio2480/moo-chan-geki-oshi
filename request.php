@@ -27,10 +27,11 @@ function request_media_type(): string
     return strtolower(trim(explode(';', $contentType, 2)[0]));
 }
 
-function run_send_serial(int $state): string
+// 照合を外しても安全なように，値は文字列のまま受け取る．tests/request_test.php がメタ文字入りの値で直接呼ぶ．
+function run_send_serial(string $argument): string
 {
     // 配列で渡すと proc_open はシェルを介さずに起動する．値は引数 1 個のまま届き，コマンドとして解釈されない．
-    $command = ['python3', __DIR__ . '/send_serial.py', (string) $state];
+    $command = ['python3', __DIR__ . '/send_serial.py', $argument];
     $process = proc_open($command, [1 => ['pipe', 'w']], $pipes);
     if (!is_resource($process)) {
         return 'send_serial.py を起動できなかった';
@@ -41,32 +42,40 @@ function run_send_serial(int $state): string
     return (string) $output;
 }
 
-if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-    header('Allow: POST');
-    respond_json(405, ['error' => 'POST only']);
-    exit;
+function handle_request(): void
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+        header('Allow: POST');
+        respond_json(405, ['error' => 'POST only']);
+        return;
+    }
+
+    if (request_media_type() !== ACCEPTED_MEDIA_TYPE) {
+        respond_json(415, ['error' => 'Content-Type must be application/json']);
+        return;
+    }
+
+    $raw = file_get_contents('php://input'); // POSTされた生のデータを受け取る
+    $data = json_decode($raw); // json形式をphp変数に変換
+    $state = (is_object($data) && isset($data->appearMOOChanState)) ? $data->appearMOOChanState : null;
+
+    // 厳密比較で照合する．緩い比較では true や "1" も 1 と一致してしまう．
+    if (!in_array($state, ALLOWED_STATES, true)) {
+        respond_json(400, ['error' => 'appearMOOChanState must be 0 or 1']);
+        return;
+    }
+
+    // php.ini を設定しておこう
+    // log_errors=On
+    // error_log="path/to/php_error_log"
+    error_log("appearMOOChanState : " . $state);
+    error_log(run_send_serial((string) $state));
+
+    // 照合済みの値だけを返す．受け取った本文をそのまま返すと，余分なキーに仕込んだ HTML を反射してしまう．
+    respond_json(200, ['appearMOOChanState' => $state]);
 }
 
-if (request_media_type() !== ACCEPTED_MEDIA_TYPE) {
-    respond_json(415, ['error' => 'Content-Type must be application/json']);
-    exit;
+// tests/request_test.php は run_send_serial() だけを使うため，この定数を定義してから読み込む．
+if (!defined('MOO_REQUEST_LIBRARY_ONLY')) {
+    handle_request();
 }
-
-$raw = file_get_contents('php://input'); // POSTされた生のデータを受け取る
-$data = json_decode($raw); // json形式をphp変数に変換
-$state = (is_object($data) && isset($data->appearMOOChanState)) ? $data->appearMOOChanState : null;
-
-// 厳密比較で照合する．緩い比較では true や "1" も 1 と一致してしまう．
-if (!in_array($state, ALLOWED_STATES, true)) {
-    respond_json(400, ['error' => 'appearMOOChanState must be 0 or 1']);
-    exit;
-}
-
-// php.ini を設定しておこう
-// log_errors=On
-// error_log="path/to/php_error_log"
-error_log("appearMOOChanState : " . $state);
-error_log(run_send_serial($state));
-
-// 照合済みの値だけを返す．受け取った本文をそのまま返すと，余分なキーに仕込んだ HTML を反射してしまう．
-respond_json(200, ['appearMOOChanState' => $state]);
