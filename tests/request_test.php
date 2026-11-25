@@ -170,17 +170,21 @@ function wait_for_server($server, int $port): void
 /**
  * HTTP/1.0 で 1 件送り，状態コード・ヘッダー・本文を返す．
  * HTTP/1.0 にするのは，チャンク転送を避けて応答をそのまま読むためである．
- * $contentType が null なら Content-Type を付けない．
+ * $contentType が null なら Content-Type を付けない．$extraHeaders は名前と値の組で，そのまま付ける．
  *
+ * @param array<string, string> $extraHeaders
  * @return array{status: int, headers: array<string, string>, body: string}
  */
-function send_request(int $port, string $method, ?string $body, ?string $contentType = 'application/json'): array
+function send_request(int $port, string $method, ?string $body, ?string $contentType = 'application/json', array $extraHeaders = []): array
 {
     $socket = fsockopen(HOST, $port, $errno, $errstr, 5.0);
     if ($socket === false) {
         throw new RuntimeException("接続できない: {$errstr}");
     }
     $request = "{$method} /request.php HTTP/1.0\r\nHost: " . HOST . ":{$port}\r\n";
+    foreach ($extraHeaders as $name => $value) {
+        $request .= "{$name}: {$value}\r\n";
+    }
     if ($body !== null) {
         if ($contentType !== null) {
             $request .= "Content-Type: {$contentType}\r\n";
@@ -351,10 +355,10 @@ try {
     wait_for_server($server, $port);
 
     // 1 件送り，その間に代役が受け取った引数の一覧を添えて返す．送る前に php -S が動いていることを確かめる．
-    $call = static function (string $method, ?string $body, ?string $contentType = 'application/json') use ($server, $port, $docRoot): array {
+    $call = static function (string $method, ?string $body, ?string $contentType = 'application/json', array $extraHeaders = []) use ($server, $port, $docRoot): array {
         assert_server_running($server);
         $before = count(stub_calls($docRoot));
-        $response = send_request($port, $method, $body, $contentType);
+        $response = send_request($port, $method, $body, $contentType, $extraHeaders);
         $response['calls'] = array_slice(stub_calls($docRoot), $before);
         return $response;
     };
@@ -402,10 +406,15 @@ try {
 
     // CSRF 対策: application/json 以外は 415 で断る．以下は他サイトのページから事前確認なしで送れる形である．
     // 本文が正常値でも send_serial.py を呼ばない．
+    // 後ろの 2 つは，パラメーターの位置に application/json を含めた形である．
+    // Fetch 仕様では media type の本体（essence）が text/plain なので，事前確認なしに送れる．
+    // 生のヘッダーを部分一致で判定すると通してしまうため，ここで固定する．
     $rejectedTypes = [
         'text/plain' => 'text/plain',
         'application/x-www-form-urlencoded' => 'application/x-www-form-urlencoded',
         'Content-Type なし' => null,
+        'text/plain; application/json' => 'text/plain; application/json',
+        'text/plain;charset=application/json' => 'text/plain;charset=application/json',
     ];
     foreach ($rejectedTypes as $label => $contentType) {
         $res = $call('POST', json_encode([VALUE_KEY => 1]), $contentType);
@@ -413,6 +422,25 @@ try {
         $check("{$label} で送った正常値は JSON で応答する", is_json_response($res), 'content-type=' . ($res['headers']['content-type'] ?? ''));
         $check("{$label} で送った正常値では send_serial.py を呼ばない", $res['calls'] === [], 'calls=' . json_encode($res['calls']));
     }
+
+    // CSRF 対策の前提: 他サイトが application/json で送るには，ブラウザーの事前確認（OPTIONS）を通る必要がある．
+    // 事前確認は，2xx の状態コードと Access-Control-Allow-* ヘッダーがそろったときだけ通る．
+    // どちらも返さず，send_serial.py も呼ばないことを確かめる．
+    $preflight = $call('OPTIONS', null, null, [
+        'Origin' => 'http://other-site.example',
+        'Access-Control-Request-Method' => 'POST',
+        'Access-Control-Request-Headers' => 'content-type',
+    ]);
+    $corsAllowHeaders = array_values(array_filter(
+        array_map('strval', array_keys($preflight['headers'])),
+        static function (string $name): bool {
+            return strpos($name, 'access-control-allow-') === 0;
+        }
+    ));
+    // 応答を読めず状態コードが 0 の場合も失敗とするため，3xx 以上であることを確かめる．
+    $check('他サイトからの事前確認の OPTIONS は 2xx を返さない', $preflight['status'] >= 300, "status={$preflight['status']}");
+    $check('他サイトからの事前確認の OPTIONS は Access-Control-Allow-* を返さない', $corsAllowHeaders === [], 'headers=' . json_encode($corsAllowHeaders));
+    $check('他サイトからの事前確認の OPTIONS では send_serial.py を呼ばない', $preflight['calls'] === [], 'calls=' . json_encode($preflight['calls']));
 
     // 不正値: 400 で断り，send_serial.py を呼ばない．
     $invalidBodies = [
