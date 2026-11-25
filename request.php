@@ -4,6 +4,7 @@
 // 受け付ける入力は，Content-Type が application/json の POST で，
 // 本文が JSON {"appearMOOChanState": 0 または 1} のものだけである．
 // それ以外は send_serial.py を呼ばずに 405・415・400 のいずれかで断る．
+// send_serial.py を起動できないか，0 以外で終わったときは 500 を返す．
 
 // 許可する appearMOOChanState．index.html が送る 0（不在）と 1（出現）に限る．
 const ALLOWED_STATES = [0, 1];
@@ -27,19 +28,40 @@ function request_media_type(): string
     return strtolower(trim(explode(';', $contentType, 2)[0]));
 }
 
-// 照合を外しても安全なように，値は文字列のまま受け取る．tests/request_test.php がメタ文字入りの値で直接呼ぶ．
-function run_send_serial(string $argument): string
+/**
+ * send_serial.py を起動して終了を待つ．起動できないか，0 以外で終わったら false を返す．
+ * 失敗の詳細はログへ書き，呼び出し元へは返さない．
+ *
+ * 照合を外しても安全なように，値は文字列のまま受け取る．tests/request_test.php がメタ文字入りの値で直接呼ぶ．
+ */
+function run_send_serial(string $argument): bool
 {
     // 配列で渡すと proc_open はシェルを介さずに起動する．値は引数 1 個のまま届き，コマンドとして解釈されない．
     $command = ['python3', __DIR__ . '/send_serial.py', $argument];
-    $process = proc_open($command, [1 => ['pipe', 'w']], $pipes);
+    // 起動できないとき，proc_open は警告を出して false を返す．
+    // display_errors が有効だと警告が応答の本文へ混ざるため，ログへ回す．失敗は戻り値で扱う．
+    set_error_handler(static function (int $level, string $message): bool {
+        error_log($message);
+        return true;
+    });
+    try {
+        $process = proc_open($command, [1 => ['pipe', 'w']], $pipes);
+    } finally {
+        restore_error_handler();
+    }
     if (!is_resource($process)) {
-        return 'send_serial.py を起動できなかった';
+        error_log('send_serial.py を起動できなかった');
+        return false;
     }
     $output = stream_get_contents($pipes[1]);
     fclose($pipes[1]);
-    proc_close($process);
-    return (string) $output;
+    $exitCode = proc_close($process);
+    error_log('send_serial.py の出力: ' . $output);
+    if ($exitCode !== 0) {
+        error_log("send_serial.py が終了コード {$exitCode} で終わった");
+        return false;
+    }
+    return true;
 }
 
 function handle_request(): void
@@ -69,7 +91,11 @@ function handle_request(): void
     // log_errors=On
     // error_log="path/to/php_error_log"
     error_log("appearMOOChanState : " . $state);
-    error_log(run_send_serial((string) $state));
+    if (!run_send_serial((string) $state)) {
+        // 詳細は run_send_serial() がログへ書いた．応答には固定の文言だけを返す．
+        respond_json(500, ['error' => 'failed to send the state to Arduino']);
+        return;
+    }
 
     // 照合済みの値だけを返す．受け取った本文をそのまま返すと，余分なキーに仕込んだ HTML を反射してしまう．
     respond_json(200, ['appearMOOChanState' => $state]);
