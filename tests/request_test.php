@@ -418,6 +418,13 @@ try {
         'boundary なしの multipart/form-data' => 'multipart/form-data',
         'text/plain; application/json' => 'text/plain; application/json',
         'text/plain;charset=application/json' => 'text/plain;charset=application/json',
+        // 区切りの後に空白が無い形．; で割った片のどれかで判定する実装を検出する．
+        'text/plain;application/json' => 'text/plain;application/json',
+        // 大文字を含む形と，; の前に空白がある形．拒否リストで判定する実装を検出する．
+        '大文字を含む text/plain' => 'Text/Plain',
+        '; の前に空白がある text/plain' => 'text/plain ;charset=utf-8',
+        // 事前確認が要る型でも application/json 以外は断る（README の仕様）．
+        'application/xml' => 'application/xml',
     ];
     foreach ($rejectedTypes as $label => $contentType) {
         $res = $call('POST', json_encode([VALUE_KEY => 1]), $contentType);
